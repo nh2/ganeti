@@ -294,6 +294,7 @@ CLEANFILES = \
 	$(addsuffix /*.o,$(HS_DIRS)) \
 	$(addsuffix /*.$(HTEST_SUFFIX)_hi,$(HS_DIRS)) \
 	$(addsuffix /*.$(HTEST_SUFFIX)_o,$(HS_DIRS)) \
+	$(CABAL_EXECUTABLES_APPS) \
 	Makefile.ghc \
 	Makefile.ghc.bak \
 	$(PYTHON_BOOTSTRAP) \
@@ -348,6 +349,7 @@ GENERATED_FILES = \
 
 clean-local:
 	rm -rf tools/shebang
+	rm -rf apps
 
 HS_GENERATED_FILES = $(HS_PROGS) src/hluxid src/ganeti-luxid
 if ENABLE_CONFD
@@ -1480,6 +1482,7 @@ EXTRA_DIST += \
 	autotools/sphinx-wrapper \
 	autotools/testrunner \
 	autotools/wrong-hardcoded-paths \
+	cabal-from-modules.py \
 	$(RUN_IN_TEMPDIR) \
 	daemons/daemon-util.in \
 	daemons/ganeti-cleaner.in \
@@ -1509,6 +1512,8 @@ EXTRA_DIST += \
 	doc/users/groupmemberships.in \
 	doc/users/groups.in \
 	doc/users/users.in \
+	ganeti.cabal \
+	ganeti.cabal.in \
 	$(dist_TESTS) \
 	$(TEST_FILES) \
 	$(python_test_support) \
@@ -2834,6 +2839,38 @@ gitignore-check:
 # target to rebuild all man pages (both groff and html output)
 .PHONY: man
 man: $(man_MANS) $(manhtml)
+
+CABAL_EXECUTABLES = $(HS_DEFAULT_PROGS)
+CABAL_EXECUTABLES_HS = $(patsubst %,%.hs,$(CABAL_EXECUTABLES))
+CABAL_EXECUTABLES_APPS = $(patsubst src/%,apps/%.hs,$(patsubst test/hs/%,apps/%.hs,$(CABAL_EXECUTABLES)))
+
+# Executable symlinks
+apps/%.hs: Makefile
+	mkdir -p apps
+	rm -f $@
+	ln -s ../$(filter %/$(notdir $@),$(CABAL_EXECUTABLES_HS)) $@
+
+# Builds the cabal file
+ganeti.cabal: ganeti.cabal.in Makefile cabal-from-modules.py $(sort $(CABAL_EXECUTABLES_APPS))
+	@echo $(subst /,.,$(patsubst %.hs,%,$(patsubst test/hs/%,%,$(patsubst src/%,%,$(HS_SRCS))))) \
+	  | python cabal-from-modules.py > ganeti.cabal
+
+	for p in $(CABAL_EXECUTABLES); do \
+	  echo                                   >> ganeti.cabal; \
+	  echo "executable `basename $$p`"       >> ganeti.cabal; \
+	  echo "  hs-source-dirs: apps"          >> ganeti.cabal; \
+	  echo "  main-is: `basename $$p`.hs"    >> ganeti.cabal; \
+	  echo "  default-language: Haskell2010" >> ganeti.cabal; \
+	  echo "  build-depends:"                >> ganeti.cabal; \
+	  echo "      base"                      >> ganeti.cabal; \
+	  echo "    , ganeti"                    >> ganeti.cabal; \
+	  if [ $$p == test/hs/htest ]; then \
+	    echo "    , hslogger"                  >> ganeti.cabal; \
+	    echo "    , test-framework"            >> ganeti.cabal; \
+	  elif [ $$p == src/rpc-test ]; then \
+	    echo "    , json"                      >> ganeti.cabal; \
+	  fi \
+	done
 
 # Target that builds all binaries (including those that are not
 # rebuilt except when running the tests)
