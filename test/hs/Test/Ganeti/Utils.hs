@@ -87,7 +87,7 @@ prop_fromObjWithDefault def_value random_key =
        random_key (def_value+1) == Just def_value
 
 -- | Test that functional if' behaves like the syntactic sugar if.
-prop_if'if :: Bool -> Int -> Int -> Gen Prop
+prop_if'if :: Bool -> Int -> Int -> Property
 prop_if'if cnd a b =
   if' cnd a b ==? if cnd then a else b
 
@@ -95,7 +95,7 @@ prop_if'if cnd a b =
 prop_select :: Int      -- ^ Default result
             -> [Int]    -- ^ List of False values
             -> [Int]    -- ^ List of True values
-            -> Gen Prop -- ^ Test result
+            -> Property -- ^ Test result
 prop_select def lst1 lst2 =
   select def (flist ++ tlist) ==? expectedresult
     where expectedresult = defaultHead def lst2
@@ -106,7 +106,7 @@ prop_select def lst1 lst2 =
 -- | Test basic select functionality with undefined default
 prop_select_undefd :: [Int]            -- ^ List of False values
                    -> NonEmptyList Int -- ^ List of True values
-                   -> Gen Prop         -- ^ Test result
+                   -> Property         -- ^ Test result
 prop_select_undefd lst1 (NonEmpty lst2) =
   -- head is fine as NonEmpty "guarantees" a non-empty list, but not
   -- via types
@@ -118,7 +118,7 @@ prop_select_undefd lst1 (NonEmpty lst2) =
 -- | Test basic select functionality with undefined list values
 prop_select_undefv :: [Int]            -- ^ List of False values
                    -> NonEmptyList Int -- ^ List of True values
-                   -> Gen Prop         -- ^ Test result
+                   -> Property         -- ^ Test result
 prop_select_undefv lst1 (NonEmpty lst2) =
   -- head is fine as NonEmpty "guarantees" a non-empty list, but not
   -- via types
