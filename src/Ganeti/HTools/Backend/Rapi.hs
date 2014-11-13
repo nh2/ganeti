@@ -151,7 +151,7 @@ parseInstance ktn a = do
   su <- extract "spindle_use" beparams
   let disks = zipWith Instance.Disk dsizes dspindles
   let inst = Instance.create name mem disk disks vcpus running tags
-             auto_balance pnode snode dt su []
+             auto_balance pnode snode dt su [] False
   return (name, inst)
 
 -- | Construct a node from a JSON object.

@@ -1,3 +1,5 @@
+{-# LANGUAGE TupleSections #-}
+
 {-| Parsing data from text-files.
 
 This module holds the code for loading the cluster state from text
@@ -54,6 +56,7 @@ module Ganeti.HTools.Backend.Text
   , serializeCluster
   ) where
 
+import Control.Applicative
 import Control.Monad
 import Data.List
 
@@ -122,9 +125,12 @@ serializeInstance nl inst =
       snode = (if sidx == Node.noSecondary
                  then ""
                  else Container.nameOf nl sidx)
+      status = if Instance.forthcoming inst
+                 then "forthcoming"
+                 else instanceStatusToRaw (Instance.runSt inst)
   in printf "%s|%d|%d|%d|%s|%s|%s|%s|%s|%s|%d|%s"
        iname (Instance.mem inst) (Instance.dsk inst)
-       (Instance.vcpus inst) (instanceStatusToRaw (Instance.runSt inst))
+       (Instance.vcpus inst) status
        (if Instance.autoBalance inst then "Y" else "N")
        pnode snode (diskTemplateToRaw (Instance.diskTemplate inst))
        (intercalate "," (Instance.allTags inst)) (Instance.spindleUse inst)
@@ -286,7 +292,9 @@ loadInst ktn [ name, mem, dsk, vcpus, status, auto_bal, pnode, snode
   vmem <- tryRead name mem
   dsize <- tryRead name dsk
   vvcpus <- tryRead name vcpus
-  vstatus <- instanceStatusFromRaw status
+  (vstatus, forthcoming) <- case status of
+    "forthcoming" -> return (Running, True)
+    _             -> (, False) <$> instanceStatusFromRaw status
   auto_balance <- case auto_bal of
                     "Y" -> return True
                     "N" -> return False
@@ -301,7 +309,7 @@ loadInst ktn [ name, mem, dsk, vcpus, status, auto_bal, pnode, snode
   let disk = Instance.Disk dsize vspindles
   let vtags = commaSplit tags
       newinst = Instance.create name vmem dsize [disk] vvcpus vstatus vtags
-                auto_balance pidx sidx disk_template spindle_use []
+                auto_balance pidx sidx disk_template spindle_use [] forthcoming
   when (Instance.hasSecondary newinst && sidx == pidx) . fail $
     "Instance " ++ name ++ " has same primary and secondary node - " ++ pnode
   return (name, newinst)

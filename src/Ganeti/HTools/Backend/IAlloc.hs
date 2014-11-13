@@ -110,7 +110,8 @@ parseBaseInstance n a = do
            mapM (parseNic n . fromJSObject)
   return
     (n,
-     Instance.create n mem disk disks vcpus Running tags True 0 0 dt su nics)
+     Instance.create n mem disk disks vcpus Running tags True 0 0 dt su nics
+                     False)
 
 -- | Parses an instance as found in the cluster instance list.
 parseInstance :: NameAssoc -- ^ The node name-to-index association list
