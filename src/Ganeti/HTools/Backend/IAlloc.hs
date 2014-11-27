@@ -108,10 +108,11 @@ parseBaseInstance n a = do
   su    <- extract "spindle_use"
   nics  <- extract "nics" >>= toArray >>= asObjectList >>=
            mapM (parseNic n . fromJSObject)
+  forthcoming <- extract "forthcoming"
   return
     (n,
      Instance.create n mem disk disks vcpus Running tags True 0 0 dt su nics
-                     False)
+                     forthcoming)
 
 -- | Parses an instance as found in the cluster instance list.
 parseInstance :: NameAssoc -- ^ The node name-to-index association list

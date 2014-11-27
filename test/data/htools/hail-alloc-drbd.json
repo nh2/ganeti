@@ -100,6 +100,7 @@
   "cluster_name": "cluster",
   "instances": {
     "instance14": {
+      "forthcoming": false,
       "disks": [
         {
           "spindles": 1,
@@ -132,6 +133,7 @@
       "os": "debian-image"
     },
     "instance13": {
+      "forthcoming": false,
       "disks": [
         {
           "spindles": 1,
@@ -163,6 +165,7 @@
       "os": "instance-debootstrap"
     },
     "instance18": {
+      "forthcoming": false,
       "disks": [
         {
           "spindles": 1,
@@ -194,6 +197,7 @@
       "os": "instance-debootstrap"
     },
     "instance19": {
+      "forthcoming": false,
       "disks": [
         {
           "spindles": 1,
@@ -226,6 +230,7 @@
       "os": "debian-image"
     },
     "instance2": {
+      "forthcoming": false,
       "disks": [
         {
           "spindles": 1,
@@ -258,6 +263,7 @@
       "os": "debian-image"
     },
     "instance3": {
+      "forthcoming": false,
       "disks": [
         {
           "spindles": 1,
@@ -294,6 +300,7 @@
       "os": "debian-image"
     },
     "instance4": {
+      "forthcoming": false,
       "disks": [
         {
           "spindles": 2,
@@ -326,6 +333,7 @@
       "os": "instance-debootstrap"
     },
     "instance8": {
+      "forthcoming": false,
       "disks": [
         {
           "spindles": 1,
@@ -357,6 +365,7 @@
       "os": "debian-image"
     },
     "instance9": {
+      "forthcoming": false,
       "disks": [
         {
           "spindles": 1,
@@ -391,6 +400,7 @@
       "os": "instance-debootstrap"
     },
     "instance20": {
+      "forthcoming": false,
       "disks": [
         {
           "spindles": 1,
@@ -543,6 +553,7 @@
     ],
     "required_nodes": 2,
     "name": "instance1",
+    "forthcoming": true,
     "tags": [],
     "hypervisor": "xen-pvm",
     "disk_space_total": 1024,
@@ -557,7 +568,7 @@
     "spindle_use": 1,
     "os": "instance-debootstrap",
     "disk_template": "drbd",
-    "memory": 1024,
+    "memory": 33400,
     "type": "allocate"
   }
 }
