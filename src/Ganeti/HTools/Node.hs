@@ -641,7 +641,7 @@ addPriEx force t inst =
       new_dsk_forth = decIf uses_disk (fDskForth t) (Instance.dsk inst)
       new_free_sp_forth = calcNewFreeSpindlesForth True t inst
       new_inst_sp_forth = calcSpindleUseForth True t inst
-      new_failn1_forth = new_mem_forth <= rMemForth t
+      new_failn1_forth = new_mem_forth < rMemForth t
       new_ucpu_forth = incIf i_online (uCpuForth t) (Instance.vcpus inst)
       new_pcpu_forth = fromIntegral new_ucpu_forth / tCpu t
       new_dp_forth = computeNewPDskForth t new_free_sp_forth new_dsk_forth
