@@ -434,7 +434,7 @@ buildPeers t il =
               (sList t)
       pmap = P.accumArray (+) mdata
       new_rmem = computeMaxRes pmap
-      new_failN1 = fMem t <= new_rmem
+      new_failN1 = fMem t < new_rmem
       new_prem = fromIntegral new_rmem / tMem t
   in t {peers=pmap, failN1 = new_failN1, rMem = new_rmem, pRem = new_prem}
 
@@ -565,7 +565,7 @@ removePri t inst =
       new_inst_sp = calcSpindleUse False t inst
       new_mp = fromIntegral new_mem / tMem t
       new_dp = computeNewPDsk t new_free_sp new_dsk
-      new_failn1 = new_mem <= rMem t
+      new_failn1 = new_mem < rMem t
       new_ucpu = decIf i_online (uCpu t) (Instance.vcpus inst)
       new_rcpu = fromIntegral new_ucpu / tCpu t
       new_load = utilLoad t `T.subUtil` Instance.util inst
@@ -598,7 +598,7 @@ removeSec t inst =
                    then old_rmem
                    else computeMaxRes new_peers
       new_prem = fromIntegral new_rmem / tMem t
-      new_failn1 = fMem t <= new_rmem
+      new_failn1 = fMem t < new_rmem
       new_dp = computeNewPDsk t new_free_sp new_dsk
       old_load = utilLoad t
       new_load = old_load { T.dskWeight = T.dskWeight old_load -
@@ -641,7 +641,7 @@ addPriEx force t inst =
       new_dsk_forth = decIf uses_disk (fDskForth t) (Instance.dsk inst)
       new_free_sp_forth = calcNewFreeSpindlesForth True t inst
       new_inst_sp_forth = calcSpindleUseForth True t inst
-      new_failn1_forth = new_mem_forth <= rMemForth t
+      new_failn1_forth = new_mem_forth < rMemForth t
       new_ucpu_forth = incIf i_online (uCpuForth t) (Instance.vcpus inst)
       new_pcpu_forth = fromIntegral new_ucpu_forth / tCpu t
       new_dp_forth = computeNewPDskForth t new_free_sp_forth new_dsk_forth
@@ -655,7 +655,7 @@ addPriEx force t inst =
       new_dsk = decIf uses_disk (fDsk t) (Instance.dsk inst)
       new_free_sp = calcNewFreeSpindles True t inst
       new_inst_sp = calcSpindleUse True t inst
-      new_failn1 = new_mem <= rMem t
+      new_failn1 = new_mem < rMem t
       new_ucpu = incIf i_online (uCpu t) (Instance.vcpus inst)
       new_pcpu = fromIntegral new_ucpu / tCpu t
       new_dp = computeNewPDsk t new_free_sp new_dsk
@@ -744,7 +744,7 @@ addSecEx force t inst pdx =
       new_peers = P.add pdx new_peem old_peers
       new_rmem = max (rMem t) new_peem
       new_prem = fromIntegral new_rmem / tMem t
-      new_failn1 = old_mem <= new_rmem
+      new_failn1 = old_mem < new_rmem
       new_dp = computeNewPDsk t new_free_sp new_dsk
       old_load = utilLoad t
       new_load = old_load { T.dskWeight = T.dskWeight old_load +
