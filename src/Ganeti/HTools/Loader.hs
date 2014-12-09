@@ -139,7 +139,7 @@ assignIndices name_element =
           . zip [0..] $ name_element
   in (M.fromList name_idx, Container.fromList idx_element)
 
--- | Given am indexed node list, and the name of the master, mark it as such. 
+-- | Given am indexed node list, and the name of the master, mark it as such.
 setMaster :: (Monad m) => NameAssoc -> Node.List -> String -> m Node.List
 setMaster node_names node_idx master = do
   kmaster <- maybe (fail $ "Master node " ++ master ++ " unknown") return $
@@ -324,7 +324,10 @@ checkData nl il =
              let nname = Node.name node
                  nilst = map (`Container.find` il) (Node.pList node)
                  dilst = filter Instance.instanceDown nilst
-                 adj_mem = sum . map Instance.mem $ dilst
+                 adj_mem = sum . map Instance.mem
+                               . filter (not . Instance.forthcoming)
+                               $ dilst
+                 adj_mem_forth = sum . map Instance.mem $ dilst
                  delta_mem = truncate (Node.tMem node)
                              - Node.nMem node
                              - Node.fMem node
@@ -335,6 +338,7 @@ checkData nl il =
                              - nodeIdsk node il
                  newn = node `Node.setXmem` delta_mem
                              `Node.setFmem` (Node.fMem node - adj_mem)
+                             `Node.setFmemForth` (Node.fMemForth node - adj_mem_forth)
                  umsg1 =
                    if delta_mem > 512 || delta_dsk > 1024
                       then printf "node %s is missing %d MB ram \
