@@ -206,8 +206,10 @@ prop_IPolicyIdempotent ipol =
 prop_CreateSerialise :: Property
 prop_CreateSerialise =
   forAll genTags $ \ctags ->
-  forAll (choose (1, 20)) $ \maxiter ->
-  forAll (choose (2, 10)) $ \count ->
+  -- forAll (choose (1, 20)) $ \maxiter ->
+  forAll (choose (1, 1)) $ \maxiter ->
+  -- forAll (choose (2, 10)) $ \count ->
+  forAll (choose (2, 2)) $ \count ->
   forAll genOnlineNode $ \node ->
   forAll (genInstanceSmallerThanNode node) $ \inst ->
   let nl = makeSmallCluster node count
@@ -234,6 +236,14 @@ prop_CreateSerialise =
                         , gl2 ==? defGroupList
                         , nl2 ==? nl'
                         ]
+              -- Ok (Loader.ClusterData gl2 nl2 il2 ctags2 cpol2) ->
+              --   let (_, nl3) = Loader.checkData nl2 il2 in
+              --   counterexample saved $ conjoin [ ctags2 ==? ctags
+              --           , cpol2 ==? Types.defIPolicy
+              --           , il2 ==? il
+              --           , gl2 ==? defGroupList
+              --           , nl3 ==? nl'
+              --           ]
 
 testSuite "HTools/Backend/Text"
             [ 'prop_Load_Instance

@@ -121,6 +121,8 @@ import Ganeti.BasicTypes
 import qualified Ganeti.HTools.Types as T
 
 import Debug.Trace -- TODO remove
+import GHC.Stack (currentCallStack)
+import System.IO.Unsafe (unsafePerformIO)
 
 -- * Type declarations
 
@@ -279,6 +281,9 @@ haveExclStorage :: List -> Bool
 haveExclStorage nl =
   any exclStorage $ Container.elems nl
 
+
+stackTrace = (unsafePerformIO (currentCallStack >>= mapM_ putStrLn) `seq`)
+
 -- * Initialization functions
 
 -- | Create a new node.
@@ -297,7 +302,7 @@ create name_init mem_t_init mem_n_init mem_f_init
        , tMem = mem_t_init
        , nMem = mem_n_init
        , fMem = mem_f_init
-       , fMemForth = mem_f_init -- TODO param?
+       , fMemForth = traceShow ("Node.create fMemForth", mem_f_init) $ (unsafePerformIO (putStrLn "" >> (currentCallStack >>= mapM_ putStrLn) >> putStrLn "") `seq`) $ mem_f_init -- TODO param?
        , tDsk = dsk_t_init
        , fDsk = dsk_f_init
        , fDskForth = dsk_f_init -- TODO param?
@@ -427,7 +432,7 @@ computeMaxRes = P.maxElem
 
 -- | Builds the peer map for a given node.
 buildPeers :: Node -> Instance.List -> Node
-buildPeers t il =
+buildPeers t il = traceShow ("buildPeers") $
   let mdata = map
               (\i_idx -> let inst = Container.find i_idx il
                              mem = if Instance.usesSecMem inst
@@ -531,7 +536,7 @@ setPri t inst
           { pTags = addTags (pTags node) (Instance.exclTags inst)
 
           , pListForth = Instance.idx inst:pListForth node
-          , uCpuForth = new_count_forth
+          , uCpuForth = traceShow ("setPri uCpuForth", new_count_forth) $ (unsafePerformIO (putStrLn "" >> (currentCallStack >>= mapM_ putStrLn) >> putStrLn "") `seq`) $ new_count_forth
           , pCpuForth = fromIntegral new_count_forth / tCpu node
           , utilLoadForth = utilLoadForth node `T.addUtil` Instance.util inst
           , instSpindlesForth = calcSpindleUseForth True node inst
@@ -596,7 +601,7 @@ setFmemForth :: Node -> Int -> Node
 setFmemForth t new_mem_forth =
   let new_n1_forth = new_mem_forth < rMemForth t
       new_mp_forth = fromIntegral new_mem_forth / tMem t
-  in t { fMemForth = new_mem_forth
+  in t { fMemForth = traceShow ("setFmemForth", new_mem_forth) $ new_mem_forth
        , failN1Forth = new_n1_forth
        , pMemForth = new_mp_forth
        }
@@ -738,7 +743,7 @@ addPriEx force t inst =
                      , fSpindles = new_free_sp
 
                      , pListForth = new_plist_forth
-                     , fMemForth = new_mem_forth
+                     , fMemForth = traceShow ("Node.addPriEx not forthcoming fMemForth", new_mem_forth, Instance.name inst) $ new_mem_forth
                      , fDskForth = new_dsk_forth
                      , failN1Forth = new_failn1_forth
                      , pMemForth = new_mp_forth
@@ -762,7 +767,7 @@ addPriEx force t inst =
         _ -> Ok t{ pTags = addTags old_tags inst_tags
 
                  , pListForth = new_plist_forth
-                 , fMemForth = new_mem_forth
+                 , fMemForth = traceShow ("Node.addPriEx forthcoming fMemForth", new_mem_forth) $ (unsafePerformIO (putStrLn "" >> (currentCallStack >>= mapM_ putStrLn) >> putStrLn "") `seq`) $ new_mem_forth
                  , fDskForth = new_dsk_forth
                  , failN1Forth = new_failn1_forth
                  , pMemForth = new_mp_forth
