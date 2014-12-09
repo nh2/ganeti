@@ -207,8 +207,10 @@ prop_IPolicyIdempotent ipol =
 prop_CreateSerialise :: Property
 prop_CreateSerialise =
   forAll genTags $ \ctags ->
-  forAll (choose (1, 20)) $ \maxiter ->
-  forAll (choose (2, 10)) $ \count ->
+  -- forAll (choose (1, 20)) $ \maxiter ->
+  forAll (choose (1, 1)) $ \maxiter ->
+  -- forAll (choose (2, 10)) $ \count ->
+  forAll (choose (2, 2)) $ \count ->
   forAll genEmptyOnlineNode $ \node ->
   forAll (genInstanceSmallerThanNode node) $ \inst ->
   let nl = makeSmallCluster node count
