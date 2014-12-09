@@ -139,7 +139,7 @@ assignIndices name_element =
           . zip [0..] $ name_element
   in (M.fromList name_idx, Container.fromList idx_element)
 
--- | Given am indexed node list, and the name of the master, mark it as such. 
+-- | Given am indexed node list, and the name of the master, mark it as such.
 setMaster :: (Monad m) => NameAssoc -> Node.List -> String -> m Node.List
 setMaster node_names node_idx master = do
   kmaster <- maybe (fail $ "Master node " ++ master ++ " unknown") return $

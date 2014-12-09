@@ -273,7 +273,8 @@ prop_addPriFC :: Property
 prop_addPriFC =
   forAll (choose (1, maxCpu)) $ \extra ->
   forAll genMaybeExclStorNode $ \node ->
-  forAll (arbitrary `suchThat` Instance.notOffline) $ \inst ->
+  forAll (arbitrary `suchThat` Instance.notOffline
+                    `suchThat` (not . Instance.forthcoming)) $ \inst ->
   let inst' = setInstanceSmallerThanNode node inst
       inst'' = inst' { Instance.vcpus = Node.availCpu node + extra }
   in case Node.addPri node inst'' of

@@ -47,6 +47,7 @@ module Ganeti.HTools.Node
   , setOffline
   , setXmem
   , setFmem
+  , setFmemForth
   , setPri
   , setSec
   , setMaster
@@ -323,7 +324,9 @@ create name_init mem_t_init mem_n_init mem_f_init
        , pDsk = if excl_stor
                 then computePDsk spindles_f_init $ fromIntegral spindles_t_init
                 else computePDsk dsk_f_init dsk_t_init
-       , pDskForth = 1
+       , pDskForth = if excl_stor
+                     then computePDsk spindles_f_init $ fromIntegral spindles_t_init
+                     else computePDsk dsk_f_init dsk_t_init
        , pRem = 0
        , pRemForth = 0
        , pCpu = fromIntegral cpu_n_init / cpu_t_init
@@ -428,15 +431,35 @@ buildPeers t il =
   let mdata = map
               (\i_idx -> let inst = Container.find i_idx il
                              mem = if Instance.usesSecMem inst
+                                      && not (Instance.forthcoming inst)
                                      then Instance.mem inst
                                      else 0
                          in (Instance.pNode inst, mem))
               (sList t)
+      mdata_forth = map
+                    (\i_idx -> let inst = Container.find i_idx il
+                                   mem = if Instance.usesSecMem inst
+                                           then Instance.mem inst
+                                           else 0
+                               in (Instance.pNode inst, mem))
+                    (sList t)
       pmap = P.accumArray (+) mdata
+      pmap_forth = P.accumArray (+) mdata_forth
       new_rmem = computeMaxRes pmap
+      new_rmem_forth = computeMaxRes pmap_forth
       new_failN1 = fMem t < new_rmem
+      new_failN1_forth = fMemForth t < new_rmem_forth
       new_prem = fromIntegral new_rmem / tMem t
-  in t {peers=pmap, failN1 = new_failN1, rMem = new_rmem, pRem = new_prem}
+      new_prem_forth = fromIntegral new_rmem_forth / tMem t
+  in t { peers=pmap
+       , failN1 = new_failN1
+       , rMem = new_rmem
+       , pRem = new_prem
+
+       , failN1Forth = new_failN1_forth
+       , rMemForth = new_rmem_forth
+       , pRemForth = new_prem_forth
+       }
 
 -- | Calculate the new spindle usage
 calcSpindleUse ::
@@ -488,15 +511,31 @@ calcNewFreeSpindlesForth act n@(Node {exclStorage = True}) i =
 -- | Assigns an instance to a node as primary and update the used VCPU
 -- count, utilisation data and tags map.
 setPri :: Node -> Instance.Instance -> Node
-setPri t inst = t { pList = Instance.idx inst:pList t
-                  , uCpu = new_count
-                  , pCpu = fromIntegral new_count / tCpu t
-                  , utilLoad = utilLoad t `T.addUtil` Instance.util inst
-                  , pTags = addTags (pTags t) (Instance.exclTags inst)
-                  , instSpindles = calcSpindleUse True t inst
-                  }
+setPri t inst
+  -- Real instance, update real fields and forthcoming fields.
+  | not (Instance.forthcoming inst) = updateForthcomingFields $ t
+      { pList = Instance.idx inst:pList t
+      , uCpu = new_count
+      , pCpu = fromIntegral new_count / tCpu t
+      , utilLoad = utilLoad t `T.addUtil` Instance.util inst
+      , instSpindles = calcSpindleUse True t inst
+      }
+  -- Forthcoming instance, update forthcoming fields only.
+  | otherwise = updateForthcomingFields t
   where new_count = Instance.applyIfOnline inst (+ Instance.vcpus inst)
-                    (uCpu t )
+                    (uCpu t)
+        new_count_forth = Instance.applyIfOnline inst (+ Instance.vcpus inst)
+                          (uCpuForth t)
+
+        updateForthcomingFields node = node
+          { pTags = addTags (pTags node) (Instance.exclTags inst)
+
+          , pListForth = Instance.idx inst:pListForth node
+          , uCpuForth = new_count_forth
+          , pCpuForth = fromIntegral new_count_forth / tCpu node
+          , utilLoadForth = utilLoadForth node `T.addUtil` Instance.util inst
+          , instSpindlesForth = calcSpindleUseForth True node inst
+          }
 
 -- | Assigns an instance to a node as secondary and updates disk utilisation.
 setSec :: Node -> Instance.Instance -> Node
@@ -551,6 +590,16 @@ setFmem t new_mem =
   let new_n1 = new_mem < rMem t
       new_mp = fromIntegral new_mem / tMem t
   in t { fMem = new_mem, failN1 = new_n1, pMem = new_mp }
+
+-- | Sets the free memory.
+setFmemForth :: Node -> Int -> Node
+setFmemForth t new_mem_forth =
+  let new_n1_forth = new_mem_forth < rMemForth t
+      new_mp_forth = fromIntegral new_mem_forth / tMem t
+  in t { fMemForth = new_mem_forth
+       , failN1Forth = new_n1_forth
+       , pMemForth = new_mp_forth
+       }
 
 -- | Removes a primary instance.
 removePri :: Node -> Instance.Instance -> Node
@@ -649,7 +698,8 @@ addPriEx force t inst =
 
       new_plist_forth = iname:pListForth t
 
-  in traceShow ("addPriEx", forthcoming, strict) $ if not forthcoming
+  -- in traceShow ("addPriEx", forthcoming, strict) $ if not forthcoming
+  in if not forthcoming
      then let
       new_mem = decIf i_online (fMem t) (Instance.mem inst)
       new_dsk = decIf uses_disk (fDsk t) (Instance.dsk inst)

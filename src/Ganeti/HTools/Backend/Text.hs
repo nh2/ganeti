@@ -125,12 +125,9 @@ serializeInstance nl inst =
       snode = (if sidx == Node.noSecondary
                  then ""
                  else Container.nameOf nl sidx)
-      status = if Instance.forthcoming inst
-                 then "forthcoming"
-                 else instanceStatusToRaw (Instance.runSt inst)
-  in printf "%s|%d|%d|%d|%s|%s|%s|%s|%s|%s|%d|%s"
+  in printf "%s|%d|%d|%d|%s|%s|%s|%s|%s|%s|%d|%s|%s"
        iname (Instance.mem inst) (Instance.dsk inst)
-       (Instance.vcpus inst) status
+       (Instance.vcpus inst) (instanceStatusToRaw (Instance.runSt inst))
        (if Instance.autoBalance inst then "Y" else "N")
        pnode snode (diskTemplateToRaw (Instance.diskTemplate inst))
        (intercalate "," (Instance.allTags inst)) (Instance.spindleUse inst)
@@ -138,6 +135,7 @@ serializeInstance nl inst =
        (case Instance.getTotalSpindles inst of
           Nothing -> "-"
           Just x -> show x)
+       (if Instance.forthcoming inst then "Y" else "N")
 
 -- | Generate instance file data from instance objects.
 serializeInstances :: Node.List -> Instance.List -> String
@@ -284,7 +282,7 @@ loadInst :: NameAssoc -- ^ Association list with the current nodes
                                                -- instance name and
                                                -- the instance object
 loadInst ktn [ name, mem, dsk, vcpus, status, auto_bal, pnode, snode
-             , dt, tags, su, spindles ] = do
+             , dt, tags, su, spindles, forthcoming_yn ] = do
   pidx <- lookupNode ktn name pnode
   sidx <- if null snode
             then return Node.noSecondary
@@ -292,9 +290,7 @@ loadInst ktn [ name, mem, dsk, vcpus, status, auto_bal, pnode, snode
   vmem <- tryRead name mem
   dsize <- tryRead name dsk
   vvcpus <- tryRead name vcpus
-  (vstatus, forthcoming) <- case status of
-    "forthcoming" -> return (Running, True)
-    _             -> (, False) <$> instanceStatusFromRaw status
+  vstatus <- instanceStatusFromRaw status
   auto_balance <- case auto_bal of
                     "Y" -> return True
                     "N" -> return False
@@ -306,6 +302,11 @@ loadInst ktn [ name, mem, dsk, vcpus, status, auto_bal, pnode, snode
   vspindles <- case spindles of
                  "-" -> return Nothing
                  _ -> liftM Just (tryRead name spindles)
+  forthcoming <- case forthcoming_yn of
+                   "Y" -> return True
+                   "N" -> return False
+                   x -> fail $ "Invalid forthcoming value '"
+                               ++ x ++ "' for instance " ++ name
   let disk = Instance.Disk dsize vspindles
   let vtags = commaSplit tags
       newinst = Instance.create name vmem dsize [disk] vvcpus vstatus vtags
