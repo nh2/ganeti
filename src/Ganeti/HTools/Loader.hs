@@ -73,6 +73,8 @@ import Ganeti.HTools.Types
 import Ganeti.Utils
 import Ganeti.Types (EvacMode)
 
+import Debug.Trace
+
 -- * Types
 
 {-| The iallocator request type.
@@ -305,7 +307,14 @@ mergeData um extags selinsts exinsts time cdata@(ClusterData gl nl il ctags _) =
                            (`Node.buildPeers` il4)) nl2
       il5 = Container.map (disableSplitMoves nl3) il4
       nl4 = Container.map (addMigrationTags ctags) nl3
+
+      -- nl5 = Container.map (\n -> n{ Node.fMemForth = Node.fMemForth n - Node.calcFmemOfflineOrForthcoming n il5 }) nl4
+
+      -- nl5 = Container.map (\n -> n{ Node.fMemForth =
+      --   Node.fMemForth n - (sum . map Instance.mem $ map (`Container.find` il5) (Node.pList n))
+      --  }) nl4
   in if' (null lkp_unknown)
+         -- (Ok cdata { cdNodes = nl5, cdInstances = il5 })
          (Ok cdata { cdNodes = nl4, cdInstances = il5 })
          (Bad $ "Unknown instance(s): " ++ show(map lrContent lkp_unknown))
 
@@ -322,15 +331,23 @@ checkData nl il =
     Container.mapAccum
         (\ msgs node ->
              let nname = Node.name node
-                 delta_mem = truncate (Node.tMem node)
-                             - Node.xMem node
+                 delta_mem = -- traceShow ( "tMem", Node.tMem node
+                             --           -- , "xMem", Node.xMem node
+                             --           , "nMem", Node.nMem node
+                             --           , "fMem", Node.fMem node
+                             --           , "imem", nodeImem node il
+                             --           , "___ = ", truncate (Node.tMem node) - Node.nMem node - Node.fMem node - nodeImem node il
+                             --           ) $
+                             truncate (Node.tMem node)
+                             -- - Node.xMem node
                              - Node.nMem node
                              - Node.fMem node
                              - nodeImem node il
                  delta_dsk = truncate (Node.tDsk node)
                              - Node.fDsk node
                              - nodeIdsk node il
-                 newn = node `Node.setXmem` delta_mem
+                 newn = -- traceShow ("delta_dsk", delta_dsk)
+                        node `Node.setXmem` delta_mem
                  umsg1 =
                    if delta_mem > 512 || delta_dsk > 1024
                       then printf "node %s is missing %d MB ram \
@@ -345,7 +362,8 @@ nodeImem :: Node.Node -> Instance.List -> Int
 nodeImem node il =
   let rfind = flip Container.find il
       il' = map rfind $ Node.pList node
-      oil' = filter Instance.notOffline il'
+      -- oil' = filter Instance.notOffline il'
+      oil' = filter Node.usesRam il'
   in sum . map Instance.mem $ oil'
 
 

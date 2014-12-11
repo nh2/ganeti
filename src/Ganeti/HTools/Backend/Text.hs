@@ -316,6 +316,11 @@ loadInst ktn [ name, mem, dsk, vcpus, status, auto_bal, pnode, snode
   return (name, newinst)
 
 loadInst ktn [ name, mem, dsk, vcpus, status, auto_bal, pnode, snode
+             , dt, tags, su, spindles ] =
+  loadInst ktn [ name, mem, dsk, vcpus, status, auto_bal, pnode, snode
+               , dt, tags, su, spindles, "N" ] -- older versions were not forthcoming
+
+loadInst ktn [ name, mem, dsk, vcpus, status, auto_bal, pnode, snode
              , dt, tags ] = loadInst ktn [ name, mem, dsk, vcpus, status,
                                            auto_bal, pnode, snode, dt, tags,
                                            "1" ]

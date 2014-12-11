@@ -53,6 +53,7 @@ import Test.Ganeti.HTools.Node (genNode, genOnlineNode, genEmptyOnlineNode
                                , genUniqueNodeList)
 
 import Ganeti.BasicTypes
+import Ganeti.Types (InstanceStatus(..))
 import qualified Ganeti.HTools.AlgorithmParams as Alg
 import qualified Ganeti.HTools.Backend.Text as Text
 import qualified Ganeti.HTools.Cluster as Cluster
@@ -63,6 +64,9 @@ import qualified Ganeti.HTools.Loader as Loader
 import qualified Ganeti.HTools.Node as Node
 import qualified Ganeti.HTools.Types as Types
 import qualified Ganeti.Utils as Utils
+
+import Control.DeepSeq
+import Debug.Trace
 
 -- * Instance text loader tests
 
@@ -109,7 +113,7 @@ prop_Load_Instance name mem dsk vcpus status
 
 prop_Load_InstanceFail :: [(String, Int)] -> [String] -> Property
 prop_Load_InstanceFail ktn fields =
-  length fields < 10 || length fields > 12 ==>
+  length fields < 10 || length fields > 13 ==>
     case Text.loadInst nl fields of
       Ok _ -> failTest "Managed to load instance from invalid data"
       Bad msg -> counterexample ("Unrecognised error message: " ++ msg) $
@@ -211,8 +215,8 @@ prop_CreateSerialise =
   forAll (choose (1, 1)) $ \maxiter ->
   -- forAll (choose (2, 10)) $ \count ->
   forAll (choose (2, 2)) $ \count ->
-  forAll genEmptyOnlineNode $ \node ->
-  forAll (genInstanceSmallerThanNode node) $ \inst ->
+  forAll genEmptyOnlineNode $ \node -> deepseq (Node.fDskForth node) $
+  forAll (genInstanceSmallerThanNode node `suchThat` (\i -> Instance.runSt i `elem` [StatusDown, StatusOffline, ErrorDown, ErrorUp, Running, UserDown])) $ \inst -> -- trace "\n --- NEW TEST ---\n" $
   let nl = makeSmallCluster node count
       reqnodes = Instance.requiredNodes $ Instance.diskTemplate inst
       opts = Alg.defaultOptions

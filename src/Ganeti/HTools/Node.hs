@@ -47,8 +47,10 @@ module Ganeti.HTools.Node
   , setOffline
   , setXmem
   , setFmem
-  , setFmemForth
+  -- , setFmemForth
   , setPri
+  , calcFmemOfflineOrForthcoming
+  , usesRam
   , setSec
   , setMaster
   , setNodeTags
@@ -113,7 +115,9 @@ import Text.Printf (printf)
 import qualified Ganeti.Constants as C
 import qualified Ganeti.OpCodes as OpCodes
 import Ganeti.Types (OobCommand(..), TagKind(..), mkNonEmpty)
+import Ganeti.HTools.Container (Container)
 import qualified Ganeti.HTools.Container as Container
+import Ganeti.HTools.Instance (Instance)
 import qualified Ganeti.HTools.Instance as Instance
 import qualified Ganeti.HTools.PeerMap as P
 
@@ -282,8 +286,6 @@ haveExclStorage nl =
   any exclStorage $ Container.elems nl
 
 
-stackTrace = (unsafePerformIO (currentCallStack >>= mapM_ putStrLn) `seq`)
-
 -- * Initialization functions
 
 -- | Create a new node.
@@ -302,9 +304,11 @@ create name_init mem_t_init mem_n_init mem_f_init
        , tMem = mem_t_init
        , nMem = mem_n_init
        , fMem = mem_f_init
-       , fMemForth = traceShow ("Node.create fMemForth", mem_f_init) $ (unsafePerformIO (putStrLn "" >> (currentCallStack >>= mapM_ putStrLn) >> putStrLn "") `seq`) $ mem_f_init -- TODO param?
+       , fMemForth = {-traceShow ("Node.create fMemForth", mem_f_init) $ (unsafePerformIO (putStrLn "" >> (currentCallStack >>= mapM_ putStrLn) >> putStrLn "") `seq`) $ -} mem_f_init -- TODO param?
        , tDsk = dsk_t_init
        , fDsk = dsk_f_init
+       -- , fDskForth = traceShow ("create dsk_f_init", dsk_f_init) . (unsafePerformIO (putStrLn "" >> (currentCallStack >>= mapM_ putStrLn) >> putStrLn "") `seq`) $ dsk_f_init -- TODO param?
+       -- , fDskForth = traceShow ("create dsk_f_init", dsk_f_init) $ dsk_f_init -- TODO param?
        , fDskForth = dsk_f_init -- TODO param?
        , tCpu = cpu_t_init
        , tCpuSpeed = 1
@@ -432,7 +436,7 @@ computeMaxRes = P.maxElem
 
 -- | Builds the peer map for a given node.
 buildPeers :: Node -> Instance.List -> Node
-buildPeers t il = traceShow ("buildPeers") $
+buildPeers t il = -- traceShow ("buildPeers") $
   let mdata = map
               (\i_idx -> let inst = Container.find i_idx il
                              mem = if Instance.usesSecMem inst
@@ -451,19 +455,19 @@ buildPeers t il = traceShow ("buildPeers") $
       pmap = P.accumArray (+) mdata
       pmap_forth = P.accumArray (+) mdata_forth
       new_rmem = computeMaxRes pmap
-      new_rmem_forth = computeMaxRes pmap_forth
+      -- new_rmem_forth = computeMaxRes pmap_forth
       new_failN1 = fMem t < new_rmem
-      new_failN1_forth = fMemForth t < new_rmem_forth
+      -- new_failN1_forth = fMemForth t < new_rmem_forth
       new_prem = fromIntegral new_rmem / tMem t
-      new_prem_forth = fromIntegral new_rmem_forth / tMem t
+      -- new_prem_forth = fromIntegral new_rmem_forth / tMem t
   in t { peers=pmap
        , failN1 = new_failN1
        , rMem = new_rmem
        , pRem = new_prem
 
-       , failN1Forth = new_failN1_forth
-       , rMemForth = new_rmem_forth
-       , pRemForth = new_prem_forth
+       -- , failN1Forth = new_failN1_forth
+       -- , rMemForth = new_rmem_forth -- TODO do this later
+       -- , pRemForth = new_prem_forth
        }
 
 -- | Calculate the new spindle usage
@@ -513,6 +517,29 @@ calcNewFreeSpindlesForth act n@(Node {exclStorage = True}) i =
                else fSpindlesForth n -- No change, as we aren't sure
     Just s -> (if act then (-) else (+)) (fSpindlesForth n) s
 
+
+usesRam :: Instance -> Bool
+usesRam inst
+  | Instance.forthcoming inst = False
+  | otherwise                 = case Instance.runSt inst of
+      T.StatusDown    -> False
+      T.StatusOffline -> False
+      T.ErrorDown     -> False
+      T.ErrorUp       -> True -- TODO should probably be True
+      T.NodeDown      -> False -- TODO check if True makes more sense
+      T.NodeOffline   -> False -- TODO check if True makes more sense
+      T.Running       -> True
+      T.UserDown      -> False
+      T.WrongNode     -> True
+
+calcFmemOfflineOrForthcoming :: Node -> Container Instance -> Int
+calcFmemOfflineOrForthcoming node allInstances =
+  let nodeInstances = map (`Container.find` allInstances) (pList node)
+  in sum . map Instance.mem
+         -- . filter (\i -> Instance.instanceDown i || Instance.forthcoming i)
+         . filter (not . usesRam)
+         $ nodeInstances
+
 -- | Assigns an instance to a node as primary and update the used VCPU
 -- count, utilisation data and tags map.
 setPri :: Node -> Instance.Instance -> Node
@@ -526,30 +553,119 @@ setPri t inst
       , instSpindles = calcSpindleUse True t inst
       }
   -- Forthcoming instance, update forthcoming fields only.
-  | otherwise = updateForthcomingFields t
+  | otherwise = updateForthcomingOnlyFields $ updateForthcomingFields t
   where new_count = Instance.applyIfOnline inst (+ Instance.vcpus inst)
                     (uCpu t)
         new_count_forth = Instance.applyIfOnline inst (+ Instance.vcpus inst)
                           (uCpuForth t)
 
-        updateForthcomingFields node = node
-          { pTags = addTags (pTags node) (Instance.exclTags inst)
+        uses_disk = Instance.usesLocalStorage inst
 
-          , pListForth = Instance.idx inst:pListForth node
-          , uCpuForth = traceShow ("setPri uCpuForth", new_count_forth) $ (unsafePerformIO (putStrLn "" >> (currentCallStack >>= mapM_ putStrLn) >> putStrLn "") `seq`) $ new_count_forth
-          , pCpuForth = fromIntegral new_count_forth / tCpu node
-          , utilLoadForth = utilLoadForth node `T.addUtil` Instance.util inst
-          , instSpindlesForth = calcSpindleUseForth True node inst
-          }
+        updateForthcomingFields node =
+          let
+              -- new_fMemForth = decIf (Instance.instanceDown inst || Instance.forthcoming inst)
+              new_fMemForth = decIf (not $ usesRam inst)
+                                    (fMemForth node)
+                                    (Instance.mem inst)
+
+              -- new_failN1Forth = new_fMemForth < rMemForth node
+              new_pMemForth = fromIntegral new_fMemForth / tMem node
+
+          in node
+               { pTags = addTags (pTags node) (Instance.exclTags inst)
+
+               , pListForth = Instance.idx inst:pListForth node
+               -- , uCpuForth = (unsafePerformIO (putStrLn "" >> (currentCallStack >>= mapM_ putStrLn) >> putStrLn "") `seq`) $ new_count_forth
+               , uCpuForth = new_count_forth
+               , pCpuForth = fromIntegral new_count_forth / tCpu node
+               , utilLoadForth = utilLoadForth node `T.addUtil` Instance.util inst
+
+               -- TODO niklash: Should this be in updateForthcomingOnlyFields? I think it is visible even for offline instances and thus goes into the obervation (text output)
+               , instSpindlesForth = calcSpindleUseForth True node inst
+
+               -- , fMemForth = fMemForth node
+               --     - (if Instance.instanceDown inst || Instance.forthcoming inst
+               --          then Instance.mem inst
+               --          else 0
+               --       )
+
+               , fMemForth = {-traceShow ("setPri fMemForth", new_fMemForth) $ -} new_fMemForth
+               -- , fMemForth = fMemForth node - Instance.mem inst
+
+               -- , failN1Forth = new_failN1Forth -- TODO do this later
+               , pMemForth = new_pMemForth
+
+
+               }
+
+        updateForthcomingOnlyFields node =
+          let
+              new_fDskForth = decIf uses_disk
+                                    (fDskForth node)
+                                    (Instance.dsk inst)
+
+              new_free_sp_forth = calcNewFreeSpindlesForth True node inst
+              new_pDskForth = computeNewPDskForth node new_free_sp_forth new_fDskForth
+          in node
+               { fDskForth = {-traceShow ("Node.setPri new_fDskForth", new_fDskForth) $ -} new_fDskForth
+               , pDskForth = {-traceShow ("Node.setPri new_pDskForth", new_pDskForth) $ -} new_pDskForth
+               -- TODO niklash: set fSpindlesForth?
+               , fSpindlesForth = new_free_sp_forth
+               }
+
 
 -- | Assigns an instance to a node as secondary and updates disk utilisation.
 setSec :: Node -> Instance.Instance -> Node
-setSec t inst = t { sList = Instance.idx inst:sList t
+setSec t inst
+  | not (Instance.forthcoming inst) = {-trace "setSec normal" $ -} updateForthcomingFields $
+                t { sList = Instance.idx inst:sList t
                   , utilLoad = old_load { T.dskWeight = T.dskWeight old_load +
                                           T.dskWeight (Instance.util inst) }
                   , instSpindles = calcSpindleUse True t inst
                   }
+  | otherwise = updateForthcomingOnlyFields $ updateForthcomingFields t
   where old_load = utilLoad t
+        uses_disk = Instance.usesLocalStorage inst
+
+        updateForthcomingFields node =
+          let
+              old_load_forth = utilLoadForth node
+
+              -- old_peers = peers t
+              -- secondary_needed_mem = if Instance.usesSecMem inst
+              --                          then Instance.mem inst
+              --                          else 0
+              -- new_peem = P.find pdx old_peers + secondary_needed_mem
+              -- new_peers = P.add pdx new_peem old_peers
+              -- new_rmem_forth = max (rMemForth t) new_peem
+              -- new_prem_forth = fromIntegral new_rmem_forth / tMem t
+              -- new_failn1_forth = old_mem_forth < new_rmem_forth
+
+          in node
+               { sListForth = Instance.idx inst:sListForth node
+               , utilLoadForth = old_load_forth { T.dskWeight = T.dskWeight old_load_forth +
+                                       T.dskWeight (Instance.util inst) }
+               -- TODO niklash: Should this be in updateForthcomingOnlyFields? I think it is visible even for offline instances and thus goes into the obervation (text output)
+               , instSpindlesForth = calcSpindleUseForth True node inst
+
+               -- , rMemForth = new_rmem_forth
+               -- , pRemForth = new_prem_forth
+               }
+
+        updateForthcomingOnlyFields node =
+          let
+              new_fDskForth = decIf uses_disk
+                                    (fDskForth node)
+                                    (Instance.dsk inst)
+              new_free_sp_forth = calcNewFreeSpindlesForth True node inst
+              new_pDskForth = computeNewPDskForth node new_free_sp_forth new_fDskForth
+          in node
+               { fDskForth = traceShow ("Node.setSec new_fDskForth", new_fDskForth) $ new_fDskForth
+               , pDskForth = traceShow ("Node.setsec new_pDskForth", new_pDskForth) $ new_pDskForth
+               -- TODO niklash: set fSpindlesForth?
+               , fSpindlesForth = new_free_sp_forth
+               }
+
 
 -- | Computes the new 'pDsk' value, handling nodes without local disk
 -- storage (we consider all their disk unused).
@@ -569,6 +685,7 @@ computeNewPDsk node new_free_sp new_free_dsk =
 computeNewPDskForth :: Node -> Int -> Int -> Double
 computeNewPDskForth node new_free_sp_forth new_free_dsk_forth =
   if exclStorage node
+  -- then traceShow ("computeNewPDskForth", "new_free_sp_forth", new_free_sp_forth, "tSpindles", tSpindles node) $ computePDsk new_free_sp_forth . fromIntegral $ tSpindles node
   then computePDsk new_free_sp_forth . fromIntegral $ tSpindles node
   else computePDsk new_free_dsk_forth $ tDsk node
 
@@ -589,6 +706,7 @@ getPolicyHealth n =
 setCpuSpeed :: Node -> Double -> Node
 setCpuSpeed n f = n { tCpuSpeed = f }
 
+-- TODO niklash: Get rid of this, it is not used in code any more
 -- | Sets the free memory.
 setFmem :: Node -> Int -> Node
 setFmem t new_mem =
@@ -597,71 +715,151 @@ setFmem t new_mem =
   in t { fMem = new_mem, failN1 = new_n1, pMem = new_mp }
 
 -- | Sets the free memory.
-setFmemForth :: Node -> Int -> Node
-setFmemForth t new_mem_forth =
-  let new_n1_forth = new_mem_forth < rMemForth t
-      new_mp_forth = fromIntegral new_mem_forth / tMem t
-  in t { fMemForth = traceShow ("setFmemForth", new_mem_forth) $ new_mem_forth
-       , failN1Forth = new_n1_forth
-       , pMemForth = new_mp_forth
-       }
+-- setFmemForth :: Node -> Int -> Node
+-- setFmemForth t new_mem_forth =
+--   let new_n1_forth = new_mem_forth < rMemForth t
+--       new_mp_forth = fromIntegral new_mem_forth / tMem t
+--   in t { fMemForth = traceShow ("setFmemForth", new_mem_forth) $ new_mem_forth
+--        , failN1Forth = new_n1_forth
+--        , pMemForth = new_mp_forth
+--        }
 
 -- | Removes a primary instance.
 removePri :: Node -> Instance.Instance -> Node
 removePri t inst =
   let iname = Instance.idx inst
+      forthcoming = Instance.forthcoming inst
       i_online = Instance.notOffline inst
       uses_disk = Instance.usesLocalStorage inst
-      new_plist = delete iname (pList t)
-      new_mem = incIf i_online (fMem t) (Instance.mem inst)
-      new_dsk = incIf uses_disk (fDsk t) (Instance.dsk inst)
-      new_free_sp = calcNewFreeSpindles False t inst
-      new_inst_sp = calcSpindleUse False t inst
-      new_mp = fromIntegral new_mem / tMem t
-      new_dp = computeNewPDsk t new_free_sp new_dsk
-      new_failn1 = new_mem < rMem t
-      new_ucpu = decIf i_online (uCpu t) (Instance.vcpus inst)
-      new_rcpu = fromIntegral new_ucpu / tCpu t
-      new_load = utilLoad t `T.subUtil` Instance.util inst
-  in t { pList = new_plist, fMem = new_mem, fDsk = new_dsk
-       , failN1 = new_failn1, pMem = new_mp, pDsk = new_dp
-       , uCpu = new_ucpu, pCpu = new_rcpu, utilLoad = new_load
-       , pTags = delTags (pTags t) (Instance.exclTags inst)
-       , instSpindles = new_inst_sp, fSpindles = new_free_sp
-       }
+
+      new_plist_forth = delete iname (pListForth t)
+      -- new_mem_forth = incIf i_online (fMemForth t) (Instance.mem inst)
+      new_mem_forth = fMemForth t + Instance.mem inst
+      new_dsk_forth = incIf uses_disk (fDskForth t) (Instance.dsk inst)
+      new_free_sp_forth = calcNewFreeSpindlesForth False t inst
+      new_inst_sp_forth = calcSpindleUseForth False t inst
+      new_mp_forth = fromIntegral new_mem_forth / tMem t
+      new_dp_forth = computeNewPDskForth t new_free_sp_forth new_dsk_forth
+      -- new_failn1_forth = new_mem_forth < rMemForth t
+      new_ucpu_forth = decIf i_online (uCpuForth t) (Instance.vcpus inst)
+      new_rcpu_forth = fromIntegral new_ucpu_forth / tCpu t
+      new_load_forth = utilLoadForth t `T.subUtil` Instance.util inst
+  in if not forthcoming
+    then
+      let
+          new_plist = delete iname (pList t)
+          -- new_mem = incIf i_online (fMem t) (Instance.mem inst)
+          new_mem = incIf (usesRam inst) (fMem t) (Instance.mem inst)
+          new_dsk = incIf uses_disk (fDsk t) (Instance.dsk inst)
+          new_free_sp = calcNewFreeSpindles False t inst
+          new_inst_sp = calcSpindleUse False t inst
+          new_mp = fromIntegral new_mem / tMem t
+          new_dp = computeNewPDsk t new_free_sp new_dsk
+          new_failn1 = new_mem < rMem t
+          new_ucpu = decIf i_online (uCpu t) (Instance.vcpus inst)
+          new_rcpu = fromIntegral new_ucpu / tCpu t
+          new_load = utilLoad t `T.subUtil` Instance.util inst
+
+      in t
+           { pList = new_plist, fMem = new_mem, fDsk = new_dsk
+           , failN1 = new_failn1, pMem = new_mp, pDsk = new_dp
+           , uCpu = new_ucpu, pCpu = new_rcpu, utilLoad = new_load
+           , pTags = delTags (pTags t) (Instance.exclTags inst)
+           , instSpindles = new_inst_sp, fSpindles = new_free_sp
+
+           , pListForth = new_plist_forth
+           , fMemForth = new_mem_forth
+           , fDskForth = new_dsk_forth
+           -- , failN1Forth = new_failn1_forth -- TODO do this later
+           , pMemForth = new_mp_forth
+           -- , pDskForth = traceShow ("removePri not forthcoming new_pDskForth", new_dp_forth) $ new_dp_forth
+           , pDskForth = new_dp_forth
+           , uCpuForth = new_ucpu_forth
+           , pCpuForth = new_rcpu_forth
+           , utilLoadForth = new_load_forth
+           , instSpindlesForth = new_inst_sp_forth
+           , fSpindlesForth = new_free_sp_forth
+           }
+    else t
+           { pTags = delTags (pTags t) (Instance.exclTags inst)
+
+           , pListForth = new_plist_forth
+           , fMemForth = new_mem_forth
+           , fDskForth = new_dsk_forth
+           -- , failN1Forth = new_failn1_forth -- TODO do this later
+           , pMemForth = new_mp_forth
+           -- , pDskForth = traceShow ("removePri forthcoming new_pDskForth", new_dp_forth) $ new_dp_forth
+           , pDskForth = new_dp_forth
+           , uCpuForth = new_ucpu_forth
+           , pCpuForth = new_rcpu_forth
+           , utilLoadForth = new_load_forth
+           , instSpindlesForth = new_inst_sp_forth
+           , fSpindlesForth = new_free_sp_forth
+           }
 
 -- | Removes a secondary instance.
 removeSec :: Node -> Instance.Instance -> Node
 removeSec t inst =
   let iname = Instance.idx inst
+      forthcoming = Instance.forthcoming inst
       uses_disk = Instance.usesLocalStorage inst
       cur_dsk = fDsk t
       pnode = Instance.pNode inst
-      new_slist = delete iname (sList t)
-      new_dsk = incIf uses_disk cur_dsk (Instance.dsk inst)
-      new_free_sp = calcNewFreeSpindles False t inst
-      new_inst_sp = calcSpindleUse False t inst
-      old_peers = peers t
-      old_peem = P.find pnode old_peers
-      new_peem = decIf (Instance.usesSecMem inst) old_peem (Instance.mem inst)
-      new_peers = if new_peem > 0
-                    then P.add pnode new_peem old_peers
-                    else P.remove pnode old_peers
-      old_rmem = rMem t
-      new_rmem = if old_peem < old_rmem
-                   then old_rmem
-                   else computeMaxRes new_peers
-      new_prem = fromIntegral new_rmem / tMem t
-      new_failn1 = fMem t < new_rmem
-      new_dp = computeNewPDsk t new_free_sp new_dsk
-      old_load = utilLoad t
-      new_load = old_load { T.dskWeight = T.dskWeight old_load -
-                                          T.dskWeight (Instance.util inst) }
-  in t { sList = new_slist, fDsk = new_dsk, peers = new_peers
-       , failN1 = new_failn1, rMem = new_rmem, pDsk = new_dp
-       , pRem = new_prem, utilLoad = new_load
-       , instSpindles = new_inst_sp, fSpindles = new_free_sp
-       }
+
+      new_slist_forth = delete iname (sListForth t)
+      new_dsk_forth = incIf uses_disk (fDskForth t) (Instance.dsk inst)
+      new_free_sp_forth = calcNewFreeSpindlesForth False t inst
+      new_inst_sp_forth = calcSpindleUseForth False t inst
+      new_dp_forth = computeNewPDsk t new_free_sp_forth new_dsk_forth
+      old_load_forth = utilLoadForth t
+      new_load_forth = old_load_forth { T.dskWeight = T.dskWeight old_load_forth -
+                                                      T.dskWeight (Instance.util inst) }
+  in if not forthcoming
+    then
+      let
+          new_slist = delete iname (sList t)
+          new_dsk = incIf uses_disk cur_dsk (Instance.dsk inst)
+          new_free_sp = calcNewFreeSpindles False t inst
+          new_inst_sp = calcSpindleUse False t inst
+          old_peers = peers t
+          old_peem = P.find pnode old_peers
+          new_peem = decIf (Instance.usesSecMem inst) old_peem (Instance.mem inst)
+          new_peers = if new_peem > 0
+                        then P.add pnode new_peem old_peers
+                        else P.remove pnode old_peers
+          old_rmem = rMem t
+          new_rmem = if old_peem < old_rmem
+                       then old_rmem
+                       else computeMaxRes new_peers
+          new_prem = fromIntegral new_rmem / tMem t
+          new_failn1 = fMem t < new_rmem
+          new_dp = computeNewPDsk t new_free_sp new_dsk
+          old_load = utilLoad t
+          new_load = old_load { T.dskWeight = T.dskWeight old_load -
+                                              T.dskWeight (Instance.util inst) }
+      in t
+           { sList = new_slist, fDsk = new_dsk, peers = new_peers
+           , failN1 = new_failn1, rMem = new_rmem, pDsk = new_dp
+           , pRem = new_prem, utilLoad = new_load
+           , instSpindles = new_inst_sp, fSpindles = new_free_sp
+
+           , sListForth = new_slist_forth
+           , fDskForth = new_dsk_forth
+           -- , failN1 = new_failn1_forth -- TODO do this later
+           , pDskForth = new_dp_forth
+           , utilLoadForth = new_load_forth
+           , instSpindlesForth = new_inst_sp_forth
+           , fSpindlesForth = new_free_sp_forth
+           }
+    else t
+           { sListForth = new_slist_forth
+           , fDskForth = new_dsk_forth
+           -- , failN1 = new_failn1_forth -- TODO do this later
+           , pDskForth = new_dp_forth
+           , utilLoadForth = new_load_forth
+           , instSpindlesForth = new_inst_sp_forth
+           , fSpindlesForth = new_free_sp_forth
+           }
 
 -- | Adds a primary instance (basic version).
 addPri :: Node -> Instance.Instance -> T.OpResult Node
@@ -679,7 +877,7 @@ addPriEx :: Bool               -- ^ Whether to override the N+1 and
          -> T.OpResult Node    -- ^ The result of the operation,
                                -- either the new version of the node
                                -- or a failure mode
-addPriEx force t inst =
+addPriEx force t inst = -- trace "addPriEx" $
   let iname = Instance.idx inst
       forthcoming = Instance.forthcoming inst
       i_online = Instance.notOffline inst
@@ -690,14 +888,16 @@ addPriEx force t inst =
 
       inst_tags = Instance.exclTags inst
 
-      new_mem_forth = decIf i_online (fMemForth t) (Instance.mem inst)
+      -- new_mem_forth = decIf i_online (fMemForth t) (Instance.mem inst)
+      new_mem_forth = fMemForth t - Instance.mem inst
       new_mp_forth = fromIntegral new_mem_forth / tMem t
       new_dsk_forth = decIf uses_disk (fDskForth t) (Instance.dsk inst)
       new_free_sp_forth = calcNewFreeSpindlesForth True t inst
       new_inst_sp_forth = calcSpindleUseForth True t inst
-      new_failn1_forth = new_mem_forth < rMemForth t
+      -- new_failn1_forth = new_mem_forth < rMemForth t
       new_ucpu_forth = incIf i_online (uCpuForth t) (Instance.vcpus inst)
       new_pcpu_forth = fromIntegral new_ucpu_forth / tCpu t
+      -- new_dp_forth = traceShow ("computeNewPDskForth", new_free_sp_forth, new_dsk_forth) $ computeNewPDskForth t new_free_sp_forth new_dsk_forth
       new_dp_forth = computeNewPDskForth t new_free_sp_forth new_dsk_forth
       new_load_forth = utilLoadForth t `T.addUtil` Instance.util inst
 
@@ -706,7 +906,8 @@ addPriEx force t inst =
   -- in traceShow ("addPriEx", forthcoming, strict) $ if not forthcoming
   in if not forthcoming
      then let
-      new_mem = decIf i_online (fMem t) (Instance.mem inst)
+      -- new_mem = decIf i_online (fMem t) (Instance.mem inst)
+      new_mem = decIf (usesRam inst) (fMem t) (Instance.mem inst)
       new_dsk = decIf uses_disk (fDsk t) (Instance.dsk inst)
       new_free_sp = calcNewFreeSpindles True t inst
       new_inst_sp = calcSpindleUse True t inst
@@ -719,15 +920,26 @@ addPriEx force t inst =
       new_plist = iname:pList t
       new_mp = fromIntegral new_mem / tMem t
      in case () of
-        _| new_mem <= 0 -> Bad T.FailMem
-         | uses_disk && new_dsk <= 0 -> Bad T.FailDisk
-         | uses_disk && new_dsk < loDsk t && strict -> Bad T.FailDisk
-         | uses_disk && exclStorage t && new_free_sp < 0 -> Bad T.FailSpindles
-         | uses_disk && new_inst_sp > hiSpindles t && strict -> Bad T.FailDisk
-         | new_failn1 && not (failN1 t) && strict -> Bad T.FailMem
-         | l_cpu >= 0 && l_cpu < new_pcpu && strict -> Bad T.FailCPU
-         | rejectAddTags old_tags inst_tags -> Bad T.FailTags
-         | otherwise ->
+        _ | new_mem <= 0 -> Bad T.FailMem
+          | uses_disk && new_dsk <= 0 -> Bad T.FailDisk
+          | uses_disk && new_dsk < loDsk t && strict -> Bad T.FailDisk
+          | uses_disk && exclStorage t && new_free_sp < 0 -> Bad T.FailSpindles
+          | uses_disk && new_inst_sp > hiSpindles t && strict -> Bad T.FailDisk
+          | new_failn1 && not (failN1 t) && strict -> Bad T.FailMem
+          | l_cpu >= 0 && l_cpu < new_pcpu && strict -> Bad T.FailCPU
+          | rejectAddTags old_tags inst_tags -> Bad T.FailTags
+
+          -- When strict also check forthcoming limits, but after normal checks
+          | strict && new_mem_forth <= 0 -> Bad T.FailMem
+          | strict && uses_disk && new_dsk_forth <= 0 -> Bad T.FailDisk
+          | strict && uses_disk && new_dsk_forth < loDsk t -> Bad T.FailDisk
+          | strict && uses_disk && exclStorage t && new_free_sp_forth < 0 -> Bad T.FailSpindles
+          | strict && uses_disk && new_inst_sp_forth > hiSpindles t -> Bad T.FailDisk
+          -- | strict && new_failn1_forth && not (failN1 t) -> Bad T.FailMem
+          | strict && l_cpu >= 0 && l_cpu < new_pcpu_forth -> Bad T.FailCPU
+          | strict && rejectAddTags old_tags inst_tags -> Bad T.FailTags -- TODO remove duplicate
+
+          | otherwise ->
                  Ok t{ pTags = addTags old_tags inst_tags
 
                      , pList = new_plist
@@ -743,10 +955,12 @@ addPriEx force t inst =
                      , fSpindles = new_free_sp
 
                      , pListForth = new_plist_forth
-                     , fMemForth = traceShow ("Node.addPriEx not forthcoming fMemForth", new_mem_forth, Instance.name inst) $ new_mem_forth
+                     , fMemForth = {-traceShow ("Node.addPriEx not forthcoming fMemForth", new_mem_forth, Instance.name inst, Instance.mem inst) $ -} new_mem_forth
+                     -- , fDskForth = traceShow ("Node.addPriEx not forthcoming new_fDskForth", new_dsk_forth, "dec by", Instance.dsk inst, "old", fDskForth t) $ new_dsk_forth
                      , fDskForth = new_dsk_forth
-                     , failN1Forth = new_failn1_forth
+                     -- , failN1Forth = new_failn1_forth -- TODO do this later
                      , pMemForth = new_mp_forth
+                     -- , pDskForth = traceShow ("Node.addPriEx not forthcoming new_pDskForth", new_dp_forth) $ new_dp_forth
                      , pDskForth = new_dp_forth
                      , uCpuForth = new_ucpu_forth
                      , pCpuForth = new_pcpu_forth
@@ -760,24 +974,28 @@ addPriEx force t inst =
              | uses_disk && new_dsk_forth < loDsk t -> Bad T.FailDisk
              | uses_disk && exclStorage t && new_free_sp_forth < 0 -> Bad T.FailSpindles
              | uses_disk && new_inst_sp_forth > hiSpindles t -> Bad T.FailDisk
-             | new_failn1_forth && not (failN1 t) -> Bad T.FailMem
+             -- | new_failn1_forth && not (failN1 t) -> Bad T.FailMem
              | l_cpu >= 0 && l_cpu < new_pcpu_forth -> Bad T.FailCPU
              | rejectAddTags old_tags inst_tags -> Bad T.FailTags
 
-        _ -> Ok t{ pTags = addTags old_tags inst_tags
+        _ -> Ok $ let
+                   t' = t{ pTags = addTags old_tags inst_tags
 
-                 , pListForth = new_plist_forth
-                 , fMemForth = traceShow ("Node.addPriEx forthcoming fMemForth", new_mem_forth) $ (unsafePerformIO (putStrLn "" >> (currentCallStack >>= mapM_ putStrLn) >> putStrLn "") `seq`) $ new_mem_forth
-                 , fDskForth = new_dsk_forth
-                 , failN1Forth = new_failn1_forth
-                 , pMemForth = new_mp_forth
-                 , pDskForth = new_dp_forth
-                 , uCpuForth = new_ucpu_forth
-                 , pCpuForth = new_pcpu_forth
-                 , utilLoadForth = new_load_forth
-                 , instSpindlesForth = new_inst_sp_forth
-                 , fSpindlesForth = new_free_sp_forth
-                 }
+                    , pListForth = new_plist_forth
+                    , fMemForth = {-traceShow ("Node.addPriEx forthcoming fMemForth", new_mem_forth) $ (unsafePerformIO (putStrLn "" >> (currentCallStack >>= mapM_ putStrLn) >> putStrLn "") `seq`) $ -} new_mem_forth
+                    -- , fDskForth = traceShow ("Node.addPriEx forthcoming new_fDskForth", new_dsk_forth) $ new_dsk_forth
+                    , fDskForth = new_dsk_forth
+                    -- , failN1Forth = new_failn1_forth -- TODO do this later
+                    , pMemForth = new_mp_forth
+                    -- , pDskForth = traceShow ("Node.addPriEx forthcoming new_pDskForth", new_dp_forth) $ new_dp_forth
+                    , pDskForth = new_dp_forth
+                    , uCpuForth = new_ucpu_forth
+                    , pCpuForth = new_pcpu_forth
+                    , utilLoadForth = new_load_forth
+                    , instSpindlesForth = new_inst_sp_forth
+                    , fSpindlesForth = new_free_sp_forth
+                    }
+                  in fDskForth t' `seq` pDskForth t' `seq` t'
 
 -- | Adds a secondary instance (basic version).
 addSec :: Node -> Instance.Instance -> T.Ndx -> T.OpResult Node
@@ -785,44 +1003,103 @@ addSec = addSecEx False
 
 -- | Adds a secondary instance (extended version).
 addSecEx :: Bool -> Node -> Instance.Instance -> T.Ndx -> T.OpResult Node
-addSecEx force t inst pdx =
+addSecEx force t inst pdx = -- trace "addSecEx" $
   let iname = Instance.idx inst
+      forthcoming = Instance.forthcoming inst
       old_peers = peers t
-      old_mem = fMem t
-      new_dsk = fDsk t - Instance.dsk inst
-      new_free_sp = calcNewFreeSpindles True t inst
-      new_inst_sp = calcSpindleUse True t inst
+      strict = not force
+
       secondary_needed_mem = if Instance.usesSecMem inst
                                then Instance.mem inst
                                else 0
       new_peem = P.find pdx old_peers + secondary_needed_mem
       new_peers = P.add pdx new_peem old_peers
-      new_rmem = max (rMem t) new_peem
-      new_prem = fromIntegral new_rmem / tMem t
-      new_failn1 = old_mem < new_rmem
-      new_dp = computeNewPDsk t new_free_sp new_dsk
-      old_load = utilLoad t
-      new_load = old_load { T.dskWeight = T.dskWeight old_load +
-                                          T.dskWeight (Instance.util inst) }
-      strict = not force
-  in case () of
-       _ | not (Instance.hasSecondary inst) -> Bad T.FailDisk
-         | new_dsk <= 0 -> Bad T.FailDisk
-         | new_dsk < loDsk t && strict -> Bad T.FailDisk
-         | exclStorage t && new_free_sp < 0 -> Bad T.FailSpindles
-         | new_inst_sp > hiSpindles t && strict -> Bad T.FailDisk
-         | secondary_needed_mem >= old_mem && strict -> Bad T.FailMem
-         | new_failn1 && not (failN1 t) && strict -> Bad T.FailMem
-         | otherwise ->
-           let new_slist = iname:sList t
-               r = t { sList = new_slist, fDsk = new_dsk
-                     , peers = new_peers, failN1 = new_failn1
-                     , rMem = new_rmem, pDsk = new_dp
-                     , pRem = new_prem, utilLoad = new_load
-                     , instSpindles = new_inst_sp
-                     , fSpindles = new_free_sp
-                     }
-           in Ok r
+
+      old_mem_forth = fMemForth t
+      new_dsk_forth = fDskForth t - Instance.dsk inst
+      new_free_sp_forth = calcNewFreeSpindlesForth True t inst
+      new_inst_sp_forth = calcSpindleUseForth True t inst
+      -- new_rmem_forth = max (rMemForth t) new_peem -- TODO do this later
+      -- new_prem_forth = fromIntegral new_rmem_forth / tMem t
+      -- new_failn1_forth = old_mem_forth < new_rmem_forth
+      new_dp_forth = computeNewPDskForth t new_free_sp_forth new_dsk_forth
+      old_load_forth = utilLoadForth t
+      new_load_forth = old_load_forth { T.dskWeight = T.dskWeight old_load_forth +
+                                                      T.dskWeight (Instance.util inst) }
+      new_slist_forth = iname:sListForth t
+
+  in if not forthcoming
+      then let
+               old_mem = fMem t
+               new_dsk = fDsk t - Instance.dsk inst
+               new_free_sp = calcNewFreeSpindles True t inst
+               new_inst_sp = calcSpindleUse True t inst
+               new_rmem = max (rMem t) new_peem
+               new_prem = fromIntegral new_rmem / tMem t
+               new_failn1 = old_mem < new_rmem
+               new_dp = computeNewPDsk t new_free_sp new_dsk
+               old_load = utilLoad t
+               new_load = old_load { T.dskWeight = T.dskWeight old_load +
+                                                   T.dskWeight (Instance.util inst) }
+               new_slist = iname:sList t
+      in case () of
+           _ | not (Instance.hasSecondary inst) -> Bad T.FailDisk
+             | new_dsk <= 0 -> Bad T.FailDisk
+             | new_dsk < loDsk t && strict -> Bad T.FailDisk
+             | exclStorage t && new_free_sp < 0 -> Bad T.FailSpindles
+             | new_inst_sp > hiSpindles t && strict -> Bad T.FailDisk
+             | secondary_needed_mem >= old_mem && strict -> Bad T.FailMem
+             | new_failn1 && not (failN1 t) && strict -> Bad T.FailMem
+
+             -- When strict also check forthcoming limits, but after normal checks
+             | strict && not (Instance.hasSecondary inst) -> Bad T.FailDisk
+             | strict && new_dsk_forth <= 0 -> Bad T.FailDisk
+             | strict && new_dsk_forth < loDsk t -> Bad T.FailDisk
+             | strict && exclStorage t && new_free_sp_forth < 0 -> Bad T.FailSpindles
+             | strict && new_inst_sp_forth > hiSpindles t -> Bad T.FailDisk
+             | strict && secondary_needed_mem >= old_mem_forth -> Bad T.FailMem
+             -- | strict && new_failn1_forth && not (failN1Forth t) -> Bad T.FailMem
+
+             | otherwise ->
+                     Ok t{ sList = new_slist, fDsk = new_dsk
+                         , peers = new_peers, failN1 = new_failn1
+                         , rMem = new_rmem, pDsk = new_dp
+                         , pRem = new_prem, utilLoad = new_load
+                         , instSpindles = new_inst_sp
+                         , fSpindles = new_free_sp
+
+                         , sListForth = new_slist_forth
+                         , fDskForth = new_dsk_forth
+                         -- , failN1Forth = new_failn1_forth
+                         -- , rMemForth = new_rmem_forth -- TODO do this later
+                         , pDskForth = traceShow ("addSecEx not forthcoming new_pDskForth", new_dp_forth) $ new_dp_forth
+                         -- , pRemForth = new_prem_forth
+                         , utilLoadForth = new_load_forth
+                         , instSpindlesForth = new_inst_sp_forth
+                         , fSpindlesForth = new_free_sp_forth
+                         }
+
+     else case strict of -- forthcoming
+           True | not (Instance.hasSecondary inst) -> Bad T.FailDisk
+                | new_dsk_forth <= 0 -> Bad T.FailDisk
+                | new_dsk_forth < loDsk t -> Bad T.FailDisk
+                | exclStorage t && new_free_sp_forth < 0 -> Bad T.FailSpindles
+                | new_inst_sp_forth > hiSpindles t -> Bad T.FailDisk
+                | secondary_needed_mem >= old_mem_forth -> Bad T.FailMem
+                -- | new_failn1_forth && not (failN1Forth t) -> Bad T.FailMem
+           _ ->
+                     Ok t{ sListForth = new_slist_forth
+                         , fDskForth = new_dsk_forth
+                         -- , failN1Forth = new_failn1_forth
+                         -- , rMemForth = new_rmem_forth -- TODO do this later
+                         , pDskForth = traceShow ("addSecEx forthcoming new_pDskForth", new_dp_forth) $ new_dp_forth
+                         -- , pRemForth = new_prem_forth
+                         , utilLoadForth = new_load_forth
+                         , instSpindlesForth = new_inst_sp_forth
+                         , fSpindlesForth = new_free_sp_forth
+                         }
+
+
 
 -- | Predicate on whether migration is supported between two nodes.
 checkMigration :: Node -> Node -> T.OpResult ()
@@ -836,7 +1113,7 @@ checkMigration nsrc ntarget =
 -- | Computes the amount of available disk on a given node.
 availDisk :: Node -> Int
 availDisk t =
-  let _f = fDsk t
+  let _f = fDsk t -- TODO Shall we use fDiskForth here?
       _l = loDsk t
   in if _f < _l
        then 0
